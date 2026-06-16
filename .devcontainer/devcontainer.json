@@ -13,23 +13,37 @@
 			"installGradle": "false"
 		}
 	},
+    //"containerEnv": {
+      //"DISABLE_JAVA_BUILD": "true"
+    //},
 
 	// Configure tool-specific properties.
 	"customizations": {
 		// Configure properties specific to VS Code.
 		"vscode": {
-			"settings": {},
+			"settings": {
+  				// "java.jdt.ls.java.home": "/usr/lib/jvm/msopenjdk-current",
+  				// "java.configuration.runtimes": [
+    			// 	{
+      			// 		"name": "JavaSE-21",
+      			// 		"path": "/usr/lib/jvm/msopenjdk-current",
+      			// 		"default": true
+    			// 	}
+  				// ]
+			},
 			"extensions": [
 				"streetsidesoftware.code-spell-checker"
 			]
 		}
-	}
+	}//,
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "java -version",
+    // "postCreateCommand": "bash -c 'source ~/.sdkman/bin/sdkman-init.sh && sdk default java 21.0.x-ms'"
+	//"postCreateCommand": "sudo ln -snf /usr/local/sdkman/candidates/java/current /home/codespace/.java/current"
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"

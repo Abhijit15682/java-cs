@@ -39,16 +39,20 @@ public class CountPrimes {
         System.out.print("Enter a non-negative integer n: ");
         if (!scanner.hasNextInt()) {
             System.out.println("Invalid input. Please enter an integer.");
+            scanner.close();
             return;
         }
 
         int n = scanner.nextInt();
         if (n < 0) {
             System.out.println("Please enter a non-negative integer.");
+            scanner.close();
             return;
         }
 
         int result = countPrimes(n);
         System.out.println("Number of primes less than " + n + " is: " + result);
+
+        scanner.close();
     }
 }

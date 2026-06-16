@@ -11,7 +11,9 @@ public class RecordPatternMatchSwitchImproved {
     }
 
     final class PhysicalOrder implements Order {
+        @SuppressWarnings("unused")
         private int weight;
+        @SuppressWarnings("unused")
         private int amount;
 
         public PhysicalOrder(int weight, int amount) {

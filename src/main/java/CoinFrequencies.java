@@ -18,6 +18,7 @@ public class CoinFrequencies {
     public static void validateRequests(int[] customerRequests) {
         int count5 = 0;
         int count10 = 0;
+        @SuppressWarnings("unused")
         int count20 = 0;
 
         for(int i =0; i< customerRequests.length; i++) {

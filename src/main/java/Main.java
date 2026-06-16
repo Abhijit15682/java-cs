@@ -9,7 +9,7 @@ public class Main {
 
     // 2. Process notifications using Java 17 Switch Pattern Matching
     public String processNotification(Notification notification) {
-        /*return switch (notification) {
+        return switch (notification) {
             case null ->  "Invalid: Payload is missing";
             case Email e -> "Sending Email to " + e.emailAddress() + " with subject: " + e.subject();
             // Guarded Pattern: Using the Java 17 'when' clause for extra conditional checks
@@ -17,7 +17,7 @@ public class Main {
             case Sms s -> "Sending SMS to " + s.phoneNumber();
             case Push p -> "Triggering Push Notification to token: " + p.deviceToken();
             // Note: No 'default' case is required here! The compiler checks exhaustiveness via the sealed interface.
-        };*/
+        };
     }
 
     public static void main(String[] args) {

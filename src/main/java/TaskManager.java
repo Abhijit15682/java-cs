@@ -1,6 +1,6 @@
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Executors;
+//import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -11,6 +11,7 @@ public class TaskManager {
         BlockingQueue<Runnable> taskQueue = new ArrayBlockingQueue<>(50);
 
         // 2. Create a Thread Pool (e.g., 5 worker threads)
+        @SuppressWarnings("resource")
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 5, 5, 1, TimeUnit.MINUTES, taskQueue
         );

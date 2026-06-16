@@ -1,3 +1,5 @@
+package com.company.app;
+
 import java.util.*;
 
 public class AmicablePairs {

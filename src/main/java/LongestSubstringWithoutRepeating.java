@@ -1,3 +1,5 @@
+
+
 import java.util.HashSet;
 import java.util.Scanner;
 import java.util.Set;
@@ -39,7 +41,7 @@ public class LongestSubstringWithoutRepeating {
         System.out.print("Enter a string: ");
         String input = scanner.nextLine();
 
-        // Validate input
+        // Validate input 
         if (input.trim().isEmpty()) {
             System.out.println("Empty string provided. Length is 0.");
         } else {
