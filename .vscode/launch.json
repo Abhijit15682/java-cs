@@ -2,6 +2,13 @@
     "configurations": [
         {
             "type": "java",
+            "name": "RateLimiterLockFree",
+            "request": "launch",
+            "mainClass": "ratelimiter.RateLimiterLockFree",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
             "name": "LongestSubstringWithoutRepeating",
             "request": "launch",
             "mainClass": "LongestSubstringWithoutRepeating",
