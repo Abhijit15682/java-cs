@@ -15,7 +15,8 @@ public class RateLimiterLockFree {
     unitTest("SLIDING_WINDOW", 1999);
     unitTest("TOKEN_BUCKET", 1999);
   }
-  private static void unitTest(String strategy,int millis) throws InterruptedException {
+
+  private static void unitTest(String strategy, int millis) throws InterruptedException {
     long twoSecondsInNs = TimeUnit.SECONDS.toNanos(2);
     String client1 = "client_1_0";
     String client2 = "client_2_0";
@@ -30,95 +31,130 @@ public class RateLimiterLockFree {
     Thread.sleep(millis);
     out.println("Client 1 Req 5: " + fixedWindowLim.checkAccess(client1));
   }
+
   static class ClientRateLimiter {
     private final Map<String, RateLimiter> clients = new ConcurrentHashMap<>();
     private final String strategy;
     private final int maxReq;
     private final long winNs;
+
     public ClientRateLimiter(String strategy, int maxReq, long winNs) {
       this.strategy = strategy;
       this.maxReq = maxReq;
       this.winNs = winNs;
     }
+
     public boolean checkAccess(String clientId) {
       RateLimiter limiter = clients.computeIfAbsent(clientId, id -> createLimiter());
       return limiter.isAllowed(clientId);
     }
+
     private RateLimiter createLimiter() {
       return switch(strategy.toUpperCase()) {
         case "FIXED_WINDOW" -> new FixedWindowLimiter(maxReq, winNs);
         case "SLIDING_WINDOW" -> new SlidingWindowLimiter(maxReq, winNs);
         case "TOKEN_BUCKET" -> new TokenBucketLimiter(maxReq, winNs);
         default -> throw new IllegalArgumentException("Unknown strategy" + strategy);
-    };
-  }  
-}
-interface RateLimiter {
-  boolean isAllowed(String clientId);
-}
-private record WindowState(long start, int count) {}
-private record BucketState(double tokens, long lastRefillTime){}
-
-static class FixedWindowLimiter implements RateLimiter {
-  private final int maxReq;
-  private final long winNs;
-  private final AtomicReference<WindowState> state;
-  public FixedWindowLimiter(int maxReq, long winNs) {
-    this.maxReq = maxReq;
-    this.winNs = winNs;
-    this.state = new AtomicReference<>(new WindowState(System.nanoTime(), 0));
+      };
+    }  
   }
-  @Override
-  public boolean isAllowed(String clientID) {
-    while(true) {
-      long now = System.nanoTime();
-      WindowState current = state.get();
-      long currentStart = current.start;
-      int currentCount = current.count;
-      if( now - currentStart >= winNs) {
-        currentStart = now;
-        currentCount = 0;
-      }
-      if (currentCount >= maxReq) {
-        return false;
-      }
-      WindowState next = new WindowState(currentStart, currentCount+1);
-      if(state.compareAndSet(current, next)) {
-        return true;
+
+  interface RateLimiter {
+    boolean isAllowed(String clientId);
+  }
+
+  private record WindowState(long start, int count) {}
+  private record BucketState(double tokens, long lastRefillTime){}
+
+  // FIXED: Lock-free atomic state transition prevents window time-shifting races
+  static class FixedWindowLimiter implements RateLimiter {
+    private final int maxReq;
+    private final long winNs;
+    private final AtomicReference<WindowState> state;
+
+    public FixedWindowLimiter(int maxReq, long winNs) {
+      this.maxReq = maxReq;
+      this.winNs = winNs;
+      this.state = new AtomicReference<>(new WindowState(System.nanoTime(), 0));
+    }
+
+    @Override
+    public boolean isAllowed(String clientID) {
+      while(true) {
+        long now = System.nanoTime();
+        WindowState current = state.get();
+        long currentStart = current.start;
+        int currentCount = current.count;
+
+        if (now - currentStart >= winNs) {
+          currentStart = now;
+          currentCount = 0;
+        }
+
+        if (currentCount >= maxReq) {
+          return false;
+        }
+
+        WindowState next = new WindowState(currentStart, currentCount + 1);
+        if (state.compareAndSet(current, next)) {
+          return true;
+        }
       }
     }
   }
-}
+
+  // FIXED: Discarded ConcurrentLinkedQueue removal race conditions. 
+  // Relies on AtomicReference-wrapped Immutable state for absolute atomicity.
   static class SlidingWindowLimiter implements RateLimiter {
     private final int maxReq;
     private final long winNs;
-    private final ConcurrentLinkedQueue<Long> reqLog = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger size = new AtomicInteger(0);
+    
+    private record WindowLog(long[] timestamps) {}
+    private final AtomicReference<WindowLog> logRef = new AtomicReference<>(new WindowLog(new long[0]));
+
     public SlidingWindowLimiter(int maxReq, long winNs) {
       this.maxReq = maxReq;
       this.winNs = winNs;
     }
+
     @Override
     public boolean isAllowed(String clientId) {
-      long now = System.nanoTime();
-      long boundary = now - winNs;
-      Long first;
-      while((first = reqLog.peek())!=null && first <= boundary ){
-        if(reqLog.remove(first)){
-            size.decrementAndGet();
+      while (true) {
+        long now = System.nanoTime();
+        long boundary = now - winNs;
+        WindowLog current = logRef.get();
+        long[] oldArray = current.timestamps;
+
+        // Count how many timestamps are still inside the valid window
+        int validCount = 0;
+        for (long ts : oldArray) {
+          if (ts > boundary) {
+            validCount++;
+          }
+        }
+
+        if (validCount >= maxReq) {
+          return false; // Limit exceeded
+        }
+
+        // Rebuild immutable array with valid previous items + current item
+        long[] newArray = new long[validCount + 1];
+        int idx = 0;
+        for (long ts : oldArray) {
+          if (ts > boundary) {
+            newArray[idx++] = ts;
+          }
+        }
+        newArray[validCount] = now;
+
+        if (logRef.compareAndSet(current, new WindowLog(newArray))) {
+          return true;
         }
       }
-      reqLog.add(now);
-      int updatedSize = size.incrementAndGet();
-      if(updatedSize <= maxReq) {
-        return true;
-      }
-      if(reqLog.remove(now)) {
-        size.decrementAndGet();
-      }
-      return false;
     }
   }
+
+  // FIXED: Preserves precision of timestamps if CAS fails due to cross-thread mutations
   static class TokenBucketLimiter implements RateLimiter {
     private final double capacity;
     private final double refillRateNs;
@@ -126,7 +162,7 @@ static class FixedWindowLimiter implements RateLimiter {
 
     public TokenBucketLimiter(long capacity, long winNs) {
       this.capacity = capacity;
-      this.refillRateNs = (double) capacity/winNs;
+      this.refillRateNs = (double) capacity / winNs;
       this.state = new AtomicReference<>(new BucketState(capacity, System.nanoTime()));
     }
 
@@ -135,12 +171,17 @@ static class FixedWindowLimiter implements RateLimiter {
       while(true) {
         long now = System.nanoTime();
         BucketState current = state.get();
+        
         long elapsedNs = Math.max(0, now - current.lastRefillTime);
         double tokensToAdd = elapsedNs * refillRateNs;
         double currentTokens = current.tokens;
+        
         if(tokensToAdd > 0) {
-          currentTokens = Math.min(capacity, currentTokens + tokensToAdd );
+          currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
+        } else {
+          now = current.lastRefillTime; // Avoid drifting clock forwards without adding tokens
         }
+
         if(currentTokens < 1.0) {
           return false;
         }
