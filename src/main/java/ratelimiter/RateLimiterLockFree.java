@@ -25,7 +25,6 @@ public class RateLimiterLockFree {
     ClientRateLimiter fixedWindowLim = new ClientRateLimiter(strategy, 3, twoSecondsInNs);
     out.println("Client 1 Req 1: " + fixedWindowLim.checkAccess(client1));
     out.println("Client 1 Req 2: " + fixedWindowLim.checkAccess(client1));
-    out.println("Client 1 Req 3: " + fixedWindowLim.checkAccess(client1));
     out.println("Client 1 Req 4: " + fixedWindowLim.checkAccess(client1));
     out.println("Client 2 Req 1: " + fixedWindowLim.checkAccess(client2));
     out.println("\nSleeping to allow window expiration..milliseconds: - " + millis);
@@ -65,9 +64,10 @@ public class RateLimiterLockFree {
   }
 
   private record WindowState(long start, int count) {}
-  private record BucketState(long tokensScaled, long lastRefillTime) {}
+  private record BucketState(long tokensScaled, long lastRefillTime, long remainderNs) {}
   private record SlidingState(long[] timestamps) {}
 
+  // FIXED WINDOW: Standard Lock-Free Framework
   static class FixedWindowLimiter implements RateLimiter {
     private final int maxReq;
     private final long winNs;
@@ -104,8 +104,8 @@ public class RateLimiterLockFree {
     }
   }
 
-  // CORRECTED: Snapshot Array isolation prevents partial write leaks.
-  // Performs early-exit validation checks before allocating heap objects.
+  // FIXED: Atomic Snapshot State Pattern. 
+  // Prevents partial-write leaks and guarantees monotonic timeline synchronization.
   static class SlidingWindowLimiter implements RateLimiter {
     private final int maxReq;
     private final long winNs;
@@ -125,6 +125,13 @@ public class RateLimiterLockFree {
         SlidingState current = stateRef.get();
         long[] oldArray = current.timestamps;
 
+        // Enforce chronological stability to catch multi-core CPU clock skews
+        if (oldArray.length > 0) {
+          now = Math.max(now, oldArray[oldArray.length - 1]);
+          boundary = now - winNs;
+        }
+
+        // Count active records within the rolling frame bounds
         int validCount = 0;
         for (long ts : oldArray) {
           if (ts > boundary) {
@@ -132,10 +139,12 @@ public class RateLimiterLockFree {
           }
         }
 
+        // Early Exit: Rejects requests immediately before initiating heap instantiations
         if (validCount >= maxReq) {
           return false; 
         }
 
+        // Build a fresh replacement array inside the isolated thread retry space
         long[] newArray = new long[validCount + 1];
         int idx = 0;
         for (long ts : oldArray) {
@@ -144,8 +153,9 @@ public class RateLimiterLockFree {
           }
         }
         newArray[validCount] = now;
-        Arrays.sort(newArray); 
+        Arrays.sort(newArray);
 
+        // Atomic reference update transition ensures absolute consistency
         if (stateRef.compareAndSet(current, new SlidingState(newArray))) {
           return true;
         }
@@ -153,54 +163,65 @@ public class RateLimiterLockFree {
     }
   }
 
-  // CORRECTED: Fixed-point integer math scaling avoids precision loss.
-  // Preserves sub-nanosecond chronological accuracy cleanly under contention.
+  // TOKEN BUCKET: Fixed-Point Scaled Framework with Remainder Continuity Accrual
   static class TokenBucketLimiter implements RateLimiter {
-    private static final long SCALE = 1_000_000_000L; 
+    private final long scale;
     private final long capacityScaled;
     private final long tokensPerNsScaled;
     private final AtomicReference<BucketState> state;
 
     public TokenBucketLimiter(long capacity, long winNs) {
-      this.capacityScaled = capacity * SCALE;
-      // Integer multiplication scaling guarantees precise division metrics
-      this.tokensPerNsScaled = (capacity * SCALE) / winNs;
-      this.state = new AtomicReference<>(new BucketState(capacityScaled, System.nanoTime()));
+      long computedScale = 1_000_000_000L;
+      while ((capacity * computedScale) / winNs == 0 && computedScale < Long.MAX_VALUE / 10_000L) {
+        computedScale *= 10L;
+      }
+      this.scale = computedScale;
+      this.capacityScaled = capacity * scale;
+      this.tokensPerNsScaled = (capacity * scale) / winNs;
+      this.state = new AtomicReference<>(new BucketState(capacityScaled, System.nanoTime(), 0L));
     }
 
     @Override
     public boolean isAllowed(String clientId) {
+      long now = System.nanoTime();
+      
       while(true) {
-        long now = System.nanoTime();
         BucketState current = state.get();
         
-        long elapsedNs = Math.max(0, now - current.lastRefillTime);
-        long tokensToAdd = elapsedNs * tokensPerNsScaled;
+        long effectiveNow = Math.max(now, current.lastRefillTime);
+        long totalElapsedNs = (effectiveNow - current.lastRefillTime) + current.remainderNs();
+        long tokensToAdd = totalElapsedNs * tokensPerNsScaled;
         long currentTokens = current.tokensScaled;
         
-        long updatedRefillTime = now;
+        long updatedRefillTime = effectiveNow;
+        long nextRemainderNs = 0L;
+        
         if (tokensToAdd > 0) {
           long totalTokens = currentTokens + tokensToAdd;
           if (totalTokens >= capacityScaled) {
             currentTokens = capacityScaled;
-            updatedRefillTime = now;
+            updatedRefillTime = effectiveNow;
+            nextRemainderNs = 0L;
           } else {
             currentTokens = totalTokens;
-            // Reverse-map exact elapsed nano consumption to eliminate timeline shifting
-            long actualGeneratedNs = tokensToAdd / tokensPerNsScaled;
-            updatedRefillTime = current.lastRefillTime + actualGeneratedNs;
+            long actualConsumedNs = tokensToAdd / tokensPerNsScaled;
+            updatedRefillTime = current.lastRefillTime + actualConsumedNs;
+            nextRemainderNs = totalElapsedNs - actualConsumedNs;
           }
         } else {
           updatedRefillTime = current.lastRefillTime;
+          nextRemainderNs = totalElapsedNs; 
         }
 
-        if (currentTokens < SCALE) {
+        if (currentTokens < scale) {
           return false; 
         }
 
-        if (state.compareAndSet(current, new BucketState(currentTokens - SCALE, updatedRefillTime))) {
+        if (state.compareAndSet(current, new BucketState(currentTokens - scale, updatedRefillTime, nextRemainderNs))) {
           return true;
         }
+        
+        now = System.nanoTime();
       }
     }
   }
