@@ -2,6 +2,13 @@
     "configurations": [
         {
             "type": "java",
+            "name": "RateLimiterStressTest",
+            "request": "launch",
+            "mainClass": "ratelimiter.RateLimiterStressTest",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
             "name": "RateLimiterLockFree",
             "request": "launch",
             "mainClass": "ratelimiter.RateLimiterLockFree",
