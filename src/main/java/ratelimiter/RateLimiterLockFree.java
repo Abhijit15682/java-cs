@@ -4,6 +4,7 @@ import static java.lang.System.*;
 import java.util.concurrent.atomic.*;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.Arrays;
 
 public class RateLimiterLockFree {
   public static void main(String[] args) throws InterruptedException {
@@ -65,8 +66,9 @@ public class RateLimiterLockFree {
 
   private record WindowState(long start, int count) {}
   private record BucketState(double tokens, long lastRefillTime){}
+  private record WindowLog(long[] timestamps) {}
 
-  // FIXED: Window start positions strictly align with step boundaries to avoid drift
+  // CORRECT: Step-aligned window frames with atomic updates
   static class FixedWindowLimiter implements RateLimiter {
     private final int maxReq;
     private final long winNs;
@@ -87,7 +89,6 @@ public class RateLimiterLockFree {
         int currentCount = current.count;
 
         if (now - currentStart >= winNs) {
-          // Calculate the correct window alignment relative to the current timeline
           long windowsPassed = (now - currentStart) / winNs;
           currentStart = currentStart + (windowsPassed * winNs);
           currentCount = 0;
@@ -97,54 +98,69 @@ public class RateLimiterLockFree {
           return false;
         }
 
-        WindowState next = new WindowState(currentStart, currentCount + 1);
-        if (state.compareAndSet(current, next)) {
+        if (state.compareAndSet(current, new WindowState(currentStart, currentCount + 1))) {
           return true;
         }
       }
     }
   }
 
-  // FIXED: Leverages an optimized atomic cyclic array structure 
-  // Allocations are decoupled from the CAS loop to maintain high performance.
+  // CORRECT: Uses an atomic immutable snapshot log. 
+  // It early-exits before allocating memory if the window limit is breached.
   static class SlidingWindowLimiter implements RateLimiter {
     private final int maxReq;
     private final long winNs;
-    private final AtomicLongArray ringBuffer;
-    private final AtomicInteger head = new AtomicInteger(0);
+    private final AtomicReference<WindowLog> logRef;
 
     public SlidingWindowLimiter(int maxReq, long winNs) {
       this.maxReq = maxReq;
       this.winNs = winNs;
-      // Pre-allocate a lock-free fixed circular log sized to maxReq limits
-      this.ringBuffer = new AtomicLongArray(maxReq);
+      this.logRef = new AtomicReference<>(new WindowLog(new long[0]));
     }
 
     @Override
     public boolean isAllowed(String clientId) {
-      long now = System.nanoTime();
-      long boundary = now - winNs;
-
       while (true) {
-        int currentHead = head.get();
-        int targetIndex = currentHead % maxReq;
-        long oldestTimestamp = ringBuffer.get(targetIndex);
+        long now = System.nanoTime();
+        long boundary = now - winNs;
+        WindowLog current = logRef.get();
+        long[] oldArray = current.timestamps;
 
-        // Reject if the oldest position slot contains a valid active timestamp
-        if (oldestTimestamp > boundary && oldestTimestamp != 0) {
+        // Count items still in active window range
+        int validCount = 0;
+        for (long ts : oldArray) {
+          if (ts > boundary) {
+            validCount++;
+          }
+        }
+
+        // Check if limit exceeded before allocating any memory
+        if (validCount >= maxReq) {
           return false; 
         }
 
-        // Advance slot ownership lock-free
-        if (head.compareAndSet(currentHead, currentHead + 1)) {
-          ringBuffer.set(targetIndex, now);
+        // Allocate copy only if request is within limits
+        long[] newArray = new long[validCount + 1];
+        int idx = 0;
+        for (long ts : oldArray) {
+          if (ts > boundary) {
+            newArray[idx++] = ts;
+          }
+        }
+        newArray[validCount] = now;
+
+        // Ensure array elements remain monotonically increasing
+        Arrays.sort(newArray);
+
+        if (logRef.compareAndSet(current, new WindowLog(newArray))) {
           return true;
         }
       }
     }
   }
 
-  // FIXED: Relies on current.lastRefillTime inside loop to calculate additions accurately
+  // CORRECT: Token calculation handles sub-nanosecond collisions safely.
+  // It anchors updates to the actual previous refill baseline to prevent time erosion.
   static class TokenBucketLimiter implements RateLimiter {
     private final double capacity;
     private final double refillRateNs;
@@ -162,24 +178,25 @@ public class RateLimiterLockFree {
         long now = System.nanoTime();
         BucketState current = state.get();
         
-        // Base timeline evaluation relative to previous structural transitions
+        // Always compute delta using the snapshot's baseline time
         long elapsedNs = Math.max(0, now - current.lastRefillTime);
         double tokensToAdd = elapsedNs * refillRateNs;
         double currentTokens = current.tokens;
         
-        long nextRefillTime = now;
-        if(tokensToAdd > 0) {
+        long updatedRefillTime;
+        if (tokensToAdd > 0) {
           currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
+          updatedRefillTime = now;
         } else {
-          nextRefillTime = current.lastRefillTime; 
+          // If no tokens are generated, do not advance the clock checkpoint!
+          updatedRefillTime = current.lastRefillTime;
         }
 
-        if(currentTokens < 1.0) {
+        if (currentTokens < 1.0) {
           return false;
         }
 
-        BucketState next = new BucketState(currentTokens - 1.0, nextRefillTime);
-        if(state.compareAndSet(current, next)) {
+        if (state.compareAndSet(current, new BucketState(currentTokens - 1.0, updatedRefillTime))) {
           return true;
         }
       }
