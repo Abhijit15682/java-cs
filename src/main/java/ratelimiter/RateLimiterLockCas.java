@@ -19,7 +19,6 @@ public class RateLimiterLockCas {
     unitTest("FIXED_WINDOW", 2000);
     unitTest("SLIDING_WINDOW", 1999);
     unitTest("TOKEN_BUCKET", 675);
-
   }
 
   /**
@@ -33,15 +32,15 @@ public class RateLimiterLockCas {
     String client1 = "client_1_0";
     String client2 = "client_2_0";
     out.println("\n\nClient Rate Limiters: " + strategy);
-    ClientRateLimiter fixedWindowLim = new ClientRateLimiter(strategy, 3, twoSecondsInNs);
-    out.println("Client 1 Req 1: " + fixedWindowLim.checkAccess(client1));
-    out.println("Client 1 Req 2: " + fixedWindowLim.checkAccess(client1));
-    out.println("Client 1 Req 3: " + fixedWindowLim.checkAccess(client1));
-    out.println("Client 1 Req 4: " + fixedWindowLim.checkAccess(client1));
-    out.println("Client 2 Req 1: " + fixedWindowLim.checkAccess(client2));
+    ClientRateLimiter limiter = new ClientRateLimiter(strategy, 3, twoSecondsInNs);
+    out.println("Client 1 Req 1: " + (limiter.checkAccess(client1) ? "Success" : "Failure"));
+    out.println("Client 1 Req 2: " + (limiter.checkAccess(client1) ? "Success" : "Failure"));
+    out.println("Client 1 Req 3: " + (limiter.checkAccess(client1) ? "Success" : "Failure"));
+    out.println("Client 1 Req 4: " + (limiter.checkAccess(client1) ? "Failure" : "Success"));
+    out.println("Client 2 Req 1: " + (limiter.checkAccess(client2) ? "Success" : "Failure"));
     out.println("\nSleeping to allow window expiration..milliseconds: - " + sleepTime);
     Thread.sleep(sleepTime);
-    out.println("Client 1 Req 5: " + fixedWindowLim.checkAccess(client1));
+    out.println("Client 1 Req 5: " + (limiter.checkAccess(client1) ? "Success" : "Failure"));
   }
 
   /**
@@ -72,7 +71,7 @@ public class RateLimiterLockCas {
      */
     public boolean checkAccess(String clientId) {
       RateLimiter limiter = clients.computeIfAbsent(clientId, id -> createLimiter());
-      return limiter.isAllowed(clientId);
+      return limiter.checkAccess();
     }
 
     /**
@@ -94,7 +93,7 @@ public class RateLimiterLockCas {
    * Parent interface RateLimiter stating method to be allowed for variation implementation.
    */
   interface RateLimiter {
-    boolean isAllowed(String clientId);
+    boolean checkAccess();
   }
 
   /**
@@ -121,7 +120,7 @@ public class RateLimiterLockCas {
      *  (for fixed same window or new window of time)
      */
     @Override
-    public boolean isAllowed(String clientID) {
+    public boolean checkAccess() {
       while(true) {
         long now = System.nanoTime();
         FixedWindow recentWindow = fixedWindowReference.get();
@@ -170,7 +169,7 @@ public class RateLimiterLockCas {
      * and evict records to make space for new to allow.
      */
     @Override
-    public boolean isAllowed(String clientId) {
+    public boolean checkAccess() {
       long now = System.nanoTime();
       long boundary = now - winNs;
       Long first;
@@ -221,7 +220,7 @@ public class RateLimiterLockCas {
      * in case duration from last refill is not much to add any token it gets restricted.
      */
     @Override
-    public boolean isAllowed(String clientId) {
+    public boolean checkAccess() {
       while(true) {
         long now = System.nanoTime();
         BucketState current = state.get();
