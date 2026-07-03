@@ -2,6 +2,13 @@
     "configurations": [
         {
             "type": "java",
+            "name": "RateLimiterLockProdCas",
+            "request": "launch",
+            "mainClass": "ratelimiter.RateLimiterLockProdCas",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
             "name": "RateLimiterLockCas",
             "request": "launch",
             "mainClass": "ratelimiter.RateLimiterLockCas",
