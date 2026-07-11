@@ -3,7 +3,6 @@ package ratelimiter;
 import static java.lang.System.*;
 import java.util.concurrent.atomic.*;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.*;
 
 /**
@@ -196,7 +195,7 @@ public class RateLimiterLockProdCas {
   }
 
   /**
-   * This implementation has token capacity, refillRatePerwin and record for BucketState and its AtomicReference
+   * This implementation has token capacity, refillRatePerWin and record for BucketState and its AtomicReference
    * It calculates refillRatePerWindow to add new tokens in bucket and evict old or counter associated.
    * 
    * TokenBucketLimiter
