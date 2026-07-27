@@ -2,6 +2,27 @@
     "configurations": [
         {
             "type": "java",
+            "name": "CryptographicHashingDemo",
+            "request": "launch",
+            "mainClass": "com.hashing.CryptographicHashingDemo",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
+            "name": "RsaEncryptionExample",
+            "request": "launch",
+            "mainClass": "encryption.asymmetric.rsa.RsaEncryptionExample",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
+            "name": "AesEncryptionExample",
+            "request": "launch",
+            "mainClass": "encryption.symmetric.aes.AesEncryptionExample",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
             "name": "RateLimiterLockProdCas",
             "request": "launch",
             "mainClass": "ratelimiter.RateLimiterLockProdCas",
