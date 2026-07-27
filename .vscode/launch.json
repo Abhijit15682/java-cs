@@ -2,6 +2,13 @@
     "configurations": [
         {
             "type": "java",
+            "name": "SimpleBlockchain",
+            "request": "launch",
+            "mainClass": "blockchain.SimpleBlockchain",
+            "projectName": "my-app"
+        },
+        {
+            "type": "java",
             "name": "CryptographicHashingDemo",
             "request": "launch",
             "mainClass": "com.hashing.CryptographicHashingDemo",
